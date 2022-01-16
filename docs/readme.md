@@ -48,7 +48,7 @@ tye run
 
 ![Tye Extension](./img/vs_code_extension_1.png)
 
-### A Simple Example
+# A Simple Example
 > The Tye example starts with a frontend project and a backend project. The main idea is "Service Discovery" and how your Tye handles the connections between projects that it knows about.
 
 The easiest example to begin with is not very impressive. However, it is a starting point on which we can begin.
@@ -116,6 +116,176 @@ The Tye Dashboard shows all of the running services.
 |Restarts|Lists the number of times the service restarted. This *should* have 0 restarts, but could indicate that something is wrong with the service if it continually resets.|
 |Logs|Will display the current log output for the service.|
 
-### Add a Web API
+# Add a Web API Backend
+> Adding a Web API as a backend will help demonstrate how Project Tye helps with starting multiple projects and service discover. In the previous example, Tye generated the bindings automatically. If it does this, how do we know how to configure the frontend to be able to talk to the backend? This is where Tye steps in with Service Location. Project Tye has a nuget package that provides extensions to .NET Core's Configuration
+
+Start by making sure that you are in the tyedemo directory. Then run the following commands in the terminal window:
+
+```
+dotnet new webapi -o backend
+dotnet sln add backend
+```
+
+running a `dir` command should list the following:
 
 
+```
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+d----         1/16/2022  11:05 AM                  backend
+d----         1/16/2022  10:14 AM                  frontend
+-a---         1/16/2022  11:13 AM           1476   tyedemo.sln
+```
+
+Before configuring the frontend to get data from the backend, execute the command `tye run` in the terminal:
+
+Notice that Tye has run both of the projects and has assigned ports.
+
+```
+[11:52:59 INF] Executing application from D:\projects\ProjectTyeBlogArticle\src\tyedemo.sln
+[11:52:59 INF] Dashboard running on http://127.0.0.1:8000
+[11:52:59 INF] Building projects
+[11:53:03 INF] Application tyedemo started successfully with Pid: 16652
+[11:53:03 INF] Launching service frontend_40f23a23-8: D:\projects\ProjectTyeBlogArticle\src\frontend\bin\Debug\net6.0\frontend.exe
+[11:53:03 INF] Launching service backend_8e14317f-b: D:\projects\ProjectTyeBlogArticle\src\backend\bin\Debug\net6.0\backend.exe
+[11:53:03 INF] frontend_40f23a23-8 running on process id 9340 bound to http://localhost:55044, https://localhost:55045
+[11:53:03 INF] Replica frontend_40f23a23-8 is moving to a ready state
+[11:53:03 INF] backend_8e14317f-b running on process id 12044 bound to http://localhost:55046, https://localhost:55047
+[11:53:03 INF] Replica backend_8e14317f-b is moving to a ready state
+[11:53:04 INF] Selected process 9340.
+[11:53:04 INF] Selected process 12044.
+[11:53:04 INF] Listening for event pipe events for frontend_40f23a23-8 on process id 9340
+[11:53:04 INF] Listening for event pipe events for backend_8e14317f-b on process id 12044
+```
+If you go to the dashboard or the Tye extension, you will see the changes there too:
+
+![Tye Extension](./img/tye_extension_2_services_running.png)
+
+Enter the following command into Terminal to list any running docker images: `docker ps -a`. There should be no packages related to the current project.
+
+If you open the backend api in either the Tye extension or the dashboard, it doesn't open the swagger index page. However, add `/swagger/index.html` in the browser and the backend swagger document should open. The backend contains the standard "WeatherForecast" endpoint that returns a random five day forecast:
+
+![Randome Five Day Forecast](./img/random_five_day_forecast.png)
+
+Be sure to stop Tye either with the extension or entering `Ctrl-C` in the terminal window.
+
+## Configure Frontend to talk to Backend
+The first step in connecting the frontend to the backend is to create a class that represents the WeatherForecast data returned by the backend.
+
+1. Add new class called `WeatherForecast.cs`
+
+```csharp
+namespace frontend;
+public class WeatherForecast
+{
+    public DateTime Date { get; set; }
+
+    public int TemperatureC { get; set; }
+
+    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+
+    public string Summary { get; set; }
+}
+```
+> This uses the C# 10 conventions for namespace and global using directives. You can read more about these updates: [What's new in C# 10](https://docs.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-10).*
+
+2. Add a strongly typed WeatherClient class called `WeatherClient.cs`
+
+```csharp
+using System.Text.Json;
+
+namespace frontend;
+
+public class WeatherClient
+{
+    private readonly JsonSerializerOptions options = new JsonSerializerOptions()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    private readonly HttpClient client;
+
+    public WeatherClient(HttpClient client)
+    {
+        this.client = client;
+    }
+
+    public async Task<WeatherForecast[]> GetWeatherAsync()
+    {
+        var responseMessage = await this.client.GetAsync("/weatherforecast");
+        var stream = await responseMessage.Content.ReadAsStreamAsync();
+        return await JsonSerializer.DeserializeAsync<WeatherForecast[]>(stream, options);
+    }
+}
+```
+3. Add a reference to the Tye configuration extensions:
+```
+dotnet add frontend/frontend.csproj package Microsoft.Tye.Extensions.Configuration  --version "0.4.0-*"
+```
+4. Configure the WeatherClient in `Program.cs`:
+```csharp
+// Add services to the container.
+builder.Services.AddRazorPages();
+
+builder.Services.AddHttpClient<WeatherClient>(client =>{
+    client.BaseAddress = builder.Configuration.GetServiceUri("backend");
+});
+```
+Be sure to add `using frontend;` at the top of `Program.cs`
+
+> With .NET 6, ASP.NET Core combines the `Startup.cs` and the `Program.exe.` You can read about this and other updates: [What's new in ASP.NET Core 6.0](https://docs.microsoft.com/en-us/aspnet/core/release-notes/aspnetcore-6.0?view=aspnetcore-6.0)
+
+Notice that the `GetServiceUri` is part of the Tye Configuration Extensions. Specifying the backend service's name will connect to the backend service's base url. This is a convention that can be modified.
+
+5. Open the `Index.cshtml.cs` file in the frontend solution and add the following code:
+
+```csharp
+public WeatherForecast[] Forecasts { get; set; }
+
+public async Task OnGet([FromServices] WeatherClient client)
+{
+    Forecasts = await client.GetWeatherAsync();
+}
+```
+> Injecting the WeatherClient directly into the Action method is done to keep the code changes minimal. Typically, this would be injected into the controller's constructor method.
+
+6. Update the `Index.cshtml` to render the `Forecasts` array:
+```html
+@page
+@model IndexModel
+@{
+     ViewData["Title"] = "Home page";
+ }
+
+<div class="text-center">
+    <h1 class="display-4">Welcome</h1>
+    <p>Learn about <a href="https://docs.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+</div>
+
+Weather Forecast:
+
+ <table class="table">
+     <thead>
+         <tr>
+             <th>Date</th>
+             <th>Temp. (C)</th>
+             <th>Temp. (F)</th>
+             <th>Summary</th>
+         </tr>
+     </thead>
+     <tbody>
+         @foreach (var forecast in @Model.Forecasts)
+         {
+             <tr>
+                 <td>@forecast.Date.ToShortDateString()</td>
+                 <td>@forecast.TemperatureC</td>
+                 <td>@forecast.TemperatureF</td>
+                 <td>@forecast.Summary</td>
+             </tr>
+         }
+     </tbody>
+ </table>
+```
+
+7. Enter `tye run` in the Terminal.

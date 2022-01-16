@@ -12,8 +12,10 @@ public class IndexModel : PageModel
         _logger = logger;
     }
 
-    public void OnGet()
-    {
+    public WeatherForecast[] Forecasts { get; set; }
 
+    public async Task OnGet([FromServices] WeatherClient client)
+    {
+        Forecasts = await client.GetWeatherAsync();
     }
 }
