@@ -165,7 +165,7 @@ Enter the following command into Terminal to list any running docker images: `do
 
 If you open the backend api in either the Tye extension or the dashboard, it doesn't open the swagger index page. However, add `/swagger/index.html` in the browser and the backend swagger document should open. The backend contains the standard "WeatherForecast" endpoint that returns a random five day forecast:
 
-![Randome Five Day Forecast](./img/random_five_day_forecast.png)
+![Random Five Day Forecast](./img/random_five_day_forecast.png)
 
 Be sure to stop Tye either with the extension or entering `Ctrl-C` in the terminal window.
 
@@ -289,3 +289,6 @@ Weather Forecast:
 ```
 
 7. Enter `tye run` in the Terminal.
+From either the Dashboard or the extension, browse to the frontend service. The frontend should make the API call to the backend and render the random weather forecast:
+
+![Random Five Day Forecast](./img/tye_demo_service_discovery.png)
