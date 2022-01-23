@@ -49,8 +49,11 @@ tye run
 
 > Docker is an essential component in the overall strategy of Project Tye. If you are not currently using Docker, don't let this intimidate you. Project Tye ultimately will "ease" you into Docker. Starting with Windows 10, Microsoft has provided the "Windows Subsystem for Linux", or, more commonly referred to as WSL. You will want to make sure that your system can run WSL 2.
 
+- [Get Docker](https://docs.docker.com/get-docker/)
 - [Configure Windows 10 for WSL 2](https://docs.microsoft.com/en-us/windows/wsl/install#upgrade-version-from-wsl-1-to-wsl-2)
 - [Configure Docker Desktop for WSL 2](https://docs.docker.com/desktop/windows/wsl/)
+
+Docker will only be used for the last section.
 
 ### Install the VS Code Plugin
 
@@ -272,7 +275,7 @@ The first step in connecting the frontend to the backend is to create a class th
 
     > With .NET 6, ASP.NET Core combines the `Startup.cs` and the `Program.exe.` You can read about this and other updates: [What's new in ASP.NET Core 6.0](https://docs.microsoft.com/en-us/aspnet/core/release-notes/aspnetcore-6.0?view=aspnetcore-6.0)
 
-    Notice that the `GetServiceUri` is part of the Tye Configuration Extensions. Specifying the backend service's name will connect to the backend service's base url. This is a convention that can be modified.
+    Notice that the `GetServiceUri` is part of the Tye Configuration Extensions. Specifying the backend service's name will connect to the backend service's base url. This is a convention that can be modified. This is one of the benefits that using Tye and the configuration extensions will bring: `service discovery.` We'll see this again when we go to configure `redis` to add caching.
 
 5. Open the `Index.cshtml.cs` file in the frontend solution and add the following code:
 
@@ -331,4 +334,183 @@ From either the Dashboard or the extension, browse to the frontend service. The 
 
     ![Random Five Day Forecast](./img/tye_demo_service_discovery.png)
 
-## Caching Weather Results with Redis 
+## Caching Weather Results with Redis
+
+This next section will require Docker. Currently, the `backend` service will randomly create a five day forecast each time it is called. We will add Redis caching to the sample and cache the results for five seconds before generating a new forecast. All of the code changes will take place in the `backend` service.
+
+## Modifying the Backend Service
+
+1. Add required `using` statements to the top `WeatherForecastController` controller:
+
+    ```csharp
+    using Microsoft.Extensions.Caching.Distributed;
+    using System.Text.Json;
+    ```
+
+2. Modify the `Get()` method in the `WeatherForecastController`
+
+    ```csharp
+    [HttpGet]
+    public async Task<string> Get([FromServices]IDistributedCache cache)
+    {
+        var weather = await cache.GetStringAsync("weather");
+
+        if (weather == null)
+        {
+            var rng = new Random();
+            var forecasts = Enumerable.Range(1, 5).Select(index => new WeatherForecast
+            {
+                Date = DateTime.Now.AddDays(index),
+                TemperatureC = rng.Next(-20, 55),
+                Summary = Summaries[rng.Next(Summaries.Length)]
+            })
+            .ToArray();
+
+            weather = JsonSerializer.Serialize(forecasts);
+
+            await cache.SetStringAsync("weather", weather, new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
+            });
+        }
+        return weather;
+    }
+    ```
+
+3. Add a package reference to `Microsoft.Extensions.Caching.StackExchangeRedis` to the `backend` service.
+
+    ```powershell
+        cd backend/
+        dotnet add package Microsoft.Extensions.Caching.StackExchangeRedis
+        cd ..
+    ```
+
+4. Next, register and configure StackExchangeRedis. Using `.NET 6`, this is done in the `Program.cs` class. Previous versions will use the `Startup.cs`
+
+    ```csharp
+        builder.Services.AddControllers();
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen();
+
+        // Add Redis
+        builder.Services.AddStackExchangeRedisCache(opt => {
+            opt.Configuration = builder.Configuration.GetConnectionString("redis");
+        });
+    ```
+
+    Where do we define the connections string for redis? Remember how we configured the frontend to talk to the backend and we used Project Tye to provide `service discovery`? We get to do that again in this project. However, we will need to add the `Microsoft.Tye.Extensions.Configuration` to the backend project as well.
+
+    ```powershell
+        dotnet add backend/backend.csproj package Microsoft.Tye.Extensions.Configuration  --version "0.4.0-*"  
+    ```
+
+5. Make sure that the `WeatherForecast` project builds. Also make sure that all of your files have been saved. It is recommended to `clean` prior to running `build` in the terminal
+
+```powershell
+dotnet clean
+dotnet build
+```
+
+Resolve any build errors before moving on.
+
+## Generating a Tye YAML file
+
+Tye uses a YAML file that allows us to add additional services and use `service discovery` to find them. Up until now, Tye was able to use basic conventions based on it's knowledge of .NET's solution files to  do that, but now, we are going to add a service that the solution file wouldn't know anything about. If you don't know what a YAML file is, Wikipedia gives a good overview in it's topic on [YAML] ("https://en.wikipedia.org/wiki/YAML"). To create the file, be sure to start in the solution directory and enter the following in terminal:
+
+```powershell
+tye init
+```
+
+After this is completed, you can run a `dir` command, and you should now see a `tye.yaml` file. Here are the contents of that file:
+
+```yaml
+name: tyedemo
+services:
+- name: frontend
+  project: frontend/frontend.csproj
+- name: backend
+  project: backend/backend.csproj
+```
+
+Now that we have the YAML file, we can add an additional service to the `services` collection. Be sure to be familiar with YAML conventions on spacing
+
+```yaml
+name: tyedemo
+services:
+- name: frontend
+  project: frontend/frontend.csproj
+- name: backend
+  project: backend/backend.csproj
+- name: redis
+  image: redis
+  bindings:
+  - port: 6379
+    connectionString: "${host}:${port}" 
+- name: redis-cli
+  image: redis
+  args: "redis-cli -h redis MONITOR"
+```
+
+Two services were added: `redis` and the `redis-cli`. Notice that both use the `image` property to specify this is a Docker image. Where did that value come from? From [Dockerhub]("https://hub.docker.com/search?q=redis&type=image")!
+
+When we run `tye run` it will use the `tye.yaml` file, it will see that there are two Docker images. If those images haven't already been `pulled` to your local image cache, it will do that the first time. You can see what Docker Images are currently cached by entering `docker image ls` in the terminal.
+
+Be sure that you have saved edits to the `tye.yaml` file.
+
+Enter `tye run` in the terminal window. You should see the following lines in the terminal output:
+
+```powershell
+[11:44:17 INF] redis: latest: Pulling from library/redis
+```
+
+You can open a terminal Window and run `docker image ls` and you should see that the redis image is in your local image cache
+
+```powershell
+REPOSITORY                       TAG           IMAGE ID       CREATED        SIZE
+redis                            latest        7614ae9453d1   4 weeks ago    113MB
+```
+
+Also enter `docker ps` in terminal to show all running Docker containers. You should see two containers running for redis:
+
+```powershell
+CONTAINER ID   IMAGE                              COMMAND                  CREATED              STATUS              PORTS                    NAMES
+3810629af37a   mcr.microsoft.com/dotnet/sdk:6.0   "dotnet Microsoft.Ty…"   About a minute ago   Up About a minute                            backend-proxy_69f788d3-a
+4f2c01ea14ae   mcr.microsoft.com/dotnet/sdk:6.0   "dotnet Microsoft.Ty…"   About a minute ago   Up About a minute                            frontend-proxy_36b8f7e9-c
+d7d9d1c9db83   redis                              "docker-entrypoint.s…"   2 minutes ago        Up 2 minutes        0.0.0.0:6379->6379/tcp   redis_6947272b-b
+667f6424ae44   redis                              "docker-entrypoint.s…"   2 minutes ago        Up 2 minutes        6379/tcp                 redis-cli_f6d52938-e
+```
+
+In `vscode`, click on the Tye extension that you installed. It will show all of the services that Tye is managing:
+![Tye Extension](img/2022-01-23-11-49-54.png)
+
+Open the Tye Dashboard as shown in the terminal output. By default it is at [Tye Dashboard](http://127.0.0.1:8000) as long as port 8000 wasn't in use.
+
+![Tye Dashboard](img/2022-01-23-11-51-58.png)
+
+Click on the bindings for the `frontend` project or enter the url in a browser. You should see the five day forecast. Now refresh the screen multiple times and notice that the output is cached!
+
+To end this example, enter `ctrl-c` in the terminal where tye is running to close down tye. Again, enter `docker ps` in the terminal to get a list of running Docker containers. Notice that they have all been stopped. The redis images are still in the local image cache, so the next time you `tye run` the project, it wll be much faster.
+
+## What Just Happened?
+
+When you executed `tye run`, tye
+
+1. Pulled a container from Docker
+2. Started the Redis Docker image
+3. Created a proxy container for both the backend and frontend. This is a tricky way that Tye helps to enable debugging.
+4. Created a network in Docker and added all of the images to the same network
+
+And all YOU had to do was
+
+1. Install Docker
+2. Create a `tye.yaml` file
+3. Add a container you wanted to use
+4. Be sure to have the `tye` extensions
+
+And when you shut `tye` down with `Ctrl-c`, all of the containers where shut down. Even though you used Redis, you didn't have to install Redis on your development machine!
+
+## Conclusion
+
+These examples are all documented in the tye documentation. The main goal is to reduce the concept count of everything you need to understand to get started writing microservices. In the documentation, you can read more about deploying your `tye` enabled project to `kubernetes` and I encourage you to go and explore that! Because Microsoft is very clear that this is an experimental project, I don't think I would want taking a dependency to the `tye` extensions in production. But, if you are wanting to learn more about `Docker` or `Kubernetes`, `tye` will help you to get started.
+
+
