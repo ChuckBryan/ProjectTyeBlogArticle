@@ -399,7 +399,7 @@ Resolve any build errors before moving on.
 
 ## Generating the Tye YAML file
 
-Tye uses a YAML file which allows using services that are not part of the Solution file. In this case, Redis will be added.
+Tye uses a YAML file to configure services which are not part of the Solution file. For this example, Redis will be added.
 
 Start by entering `tye init` in the terminal. Tye will generate a `tye.yml`:
 
@@ -431,9 +431,9 @@ services:
   args: "redis-cli -h redis MONITOR"
 ```
 
-Those services are `redis` images available on [Dockerhub]("https://hub.docker.com/search?q=redis&type=image").
+Services with an `image` attribute are Docker Images hosted on [Dockerhub]("https://hub.docker.com/search?q=redis&type=image").
 
-Executing `tye run` will use  `tye.yaml` file, and will pull the images from `Dockerhub` if they do not already exist in the local Docker image cache. In addition, `tye` will also create an environment variable for the connection string using the correct host and port. Enter `tye run` in the terminal window. The Redis image will be pulled down the first time.
+Enter `tye run` in the terminal window.
 
 ```powershell
 [11:44:17 INF] redis: latest: Pulling from library/redis
@@ -444,7 +444,7 @@ What did `tye run` do?
 2. It started the Redis Docker image
 3. It Created proxy containers for the backend and frontend.
 4. It Created a Docker network and added all of the containers to it.
-5. It added environment variables for the `redis` connection string.
+5. It added environment variables for the `redis` connection string (including the correct Host and Port that `tye` generated)
 
 The Tye extension will show the running services:
 ![Tye Extension](img/2022-01-23-11-49-54.png)
