@@ -215,7 +215,7 @@ In the frontend project, a class to represent the WeatherForecast data returned 
 
     > This uses the C# 10 conventions for namespace and global using directives. Reference [What's new in C# 10](https://docs.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-10).
 
-2. Add a strongly typed WeatherClient class called `WeatherClient.cs` in the frontend project.
+2. Add a typed HttpClient class called WeatherClient to the frontend project.
 
     ```csharp
     using System.Text.Json;
